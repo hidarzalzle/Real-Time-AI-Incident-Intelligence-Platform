@@ -1,0 +1,111 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Docker
+      Rabbit__Host: ${RABBIT_HOST}
+      Rabbit__Port: ${RABBIT_PORT}
+      Rabbit__Username: ${RABBIT_USER}
+      Rabbit__Password: ${RABBIT_PASS}
+      Redis__ConnectionString: ${REDIS_CONNECTION}
+      Elastic__Endpoint: ${ELASTIC_ENDPOINT}
+      OpenTelemetry__Endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      LLM__Provider: ${LLM_PROVIDER}
+    ports:
+      - "8080:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      DOTNET_ENVIRONMENT: Docker
+      Rabbit__Host: ${RABBIT_HOST}
+      Rabbit__Port: ${RABBIT_PORT}
+      Rabbit__Username: ${RABBIT_USER}
+      Rabbit__Password: ${RABBIT_PASS}
+      Redis__ConnectionString: ${REDIS_CONNECTION}
+      Elastic__Endpoint: ${ELASTIC_ENDPOINT}
+      OpenTelemetry__Endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      LLM__Provider: ${LLM_PROVIDER}
+      Processing__AutoResolveQuietMinutes: ${AUTO_RESOLVE_MINUTES}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.14.3
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.104.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./docs/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+

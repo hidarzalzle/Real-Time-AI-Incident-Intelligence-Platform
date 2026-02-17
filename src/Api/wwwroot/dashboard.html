@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Incident Intelligence Dashboard</title>
+  <style>
+    body{font-family:Inter,Arial;background:#0b1020;color:#ecf1ff;margin:0;padding:20px}
+    h1{margin:0 0 14px} .grid{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+    .card{background:#151c33;border:1px solid #2f3b65;border-radius:10px;padding:12px}
+    table{width:100%;border-collapse:collapse} th,td{padding:8px;border-bottom:1px solid #2f3b65}
+    .pill{padding:2px 8px;border-radius:999px;font-size:12px}.S0,.S1{background:#dc2626}.S2{background:#ea580c}.S3{background:#ca8a04}.S4{background:#16a34a}
+    button{background:#3651a3;color:#fff;border:none;border-radius:6px;padding:8px 12px;margin-right:6px;cursor:pointer}
+    pre{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <h1>Real-Time AI Incident Intelligence</h1>
+  <div style="margin-bottom:12px">
+    <button onclick="simulate('error-burst')">Simulate Error Burst</button>
+    <button onclick="simulate('latency-spike')">Simulate Latency Spike</button>
+    <button onclick="simulate('novel-fingerprint')">Simulate Novel Fingerprint</button>
+    <button onclick="simulate('multi-host-spread')">Simulate Multi-Host Spread</button>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h3>Live Incidents</h3>
+      <table><thead><tr><th>Title</th><th>Status</th><th>Severity</th><th>Score</th></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+    <div class="card">
+      <h3>Incident Detail</h3>
+      <div id="detail">Select an incident from table.</div>
+    </div>
+    <div class="card">
+      <h3>DLQ Panel</h3>
+      <pre id="dlq">No dead letters.</pre>
+    </div>
+    <div class="card">
+      <h3>Live Stats</h3>
+      <pre id="stats"></pre>
+    </div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+<script>
+let incidents=[];
+async function refresh(){
+  incidents = await (await fetch('/api/incidents')).json();
+  render();
+  const dlq = await (await fetch('/api/deadletters')).json();
+  document.getElementById('dlq').textContent = JSON.stringify(dlq,null,2);
+}
+function render(){
+  const tbody=document.getElementById('rows'); tbody.innerHTML='';
+  incidents.forEach(i=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${i.title}</td><td>${i.status}</td><td><span class='pill ${i.severity}'>${i.severity}</span></td><td>${i.anomalyScore.toFixed(2)}</td>`;
+    tr.onclick=()=>showDetail(i.id);
+    tbody.appendChild(tr);
+  });
+}
+async function showDetail(id){
+  const i = await (await fetch('/api/incidents/'+id)).json();
+  const events = await (await fetch('/api/incidents/'+id+'/events')).json();
+  document.getElementById('detail').innerHTML = `<b>${i.title}</b><br/><small>${i.source} / ${i.env}</small>
+    <p>${i.summary}</p><p>${i.explanation}</p>
+    <b>Actions</b><ul>${(i.recommendedActions||[]).map(a=>`<li>${a}</li>`).join('')}</ul>
+    <b>Evidence</b><ul>${(i.evidence||[]).map(e=>`<li>${e.message}</li>`).join('')}</ul>
+    <b>Timeline</b><pre>${JSON.stringify(events,null,2)}</pre>`;
+}
+async function simulate(scenario){
+  await fetch('/api/simulate/logs?scenario='+encodeURIComponent(scenario),{method:'POST'});
+  setTimeout(refresh,1200);
+}
+const hub = new signalR.HubConnectionBuilder().withUrl('/hubs/incidents').build();
+hub.on('incidentOpened', _=>refresh());
+hub.on('incidentUpdated', _=>refresh());
+hub.on('incidentResolved', _=>refresh());
+hub.on('deadLettered', _=>refresh());
+hub.on('statsUpdated', s=>document.getElementById('stats').textContent=JSON.stringify(s,null,2));
+hub.start().then(refresh);
+</script>
+</body>
+</html>
